@@ -30,6 +30,45 @@ with `_meta.claudeCode.subagent = true`.
 Clients that do not advertise the capability retain the legacy flattened behavior. In both modes,
 the normal Agent/Task tool result is preserved as the protocol-compatible fallback.
 
+## Protected user settings (CRA-955 fork)
+
+Version `0.65.0-cra955.1` adds a transport-neutral, opt-in launcher contract:
+`CLAUDE_ACP_SETTINGS_SCOPE=user`. When absent, existing behavior is unchanged.
+When present, any value other than `user` is refused at session creation.
+
+The launcher must set an absolute `CLAUDE_CONFIG_DIR` containing the selected
+`settings.json`. Both the shim SettingsManager and SDK query use only the user
+filesystem source; managed policy is still resolved by the SDK and is not
+bypassed. The same selected file is passed to the SDK as `settings`, avoiding a
+second caller-selected settings layer. New and load share this creation path.
+Project/local settings do not influence the shim's permission/model defaults
+or its settings-file watchers in this mode. The selected file must be a readable
+JSON object of at most 2 MiB; nonempty content must survive SDK schema resolution
+as the selected user source. Initial failure is an error, not an empty-settings
+fallback. A rejected reload logs the failure and retains last-good shim settings.
+
+Optional `_meta.claudeCode.options.settingSources` must be exactly `["user"]`.
+An explicit `settings` option must resolve to the same selected user settings
+file. Caller `env`, `extraArgs`, and `strictMcpConfig: false` are refused; strict
+MCP is forced. The launcher/client still owns selected-plus-session MCP
+composition and name-collision checks. This contract is not a malicious-client
+sandbox, provider lock, native qualification or permission to bypass managed
+policy. Native `policyHelper` behavior is outside the SDK's in-process settings
+resolver and requires separate qualification.
+
+Build and fake/unit verification (no native harness):
+
+```sh
+pnpm --ignore-workspace import
+pnpm --ignore-workspace install --frozen-lockfile --ignore-scripts
+pnpm --ignore-workspace exec vitest run src/tests/settings.test.ts src/tests/protected-settings.test.ts src/tests/acp-agent-settings.test.ts src/tests/settings-protected-lifecycle.test.ts
+pnpm --ignore-workspace exec tsc
+```
+
+`package-lock.json` remains the upstream dependency lock; the local pnpm lock is
+imported for verification. No installed package or native profile is updated by
+these source changes.
+
 ## Contribution Policy
 
 This project does not require a Contributor License Agreement (CLA). Instead, contributions are accepted under the following terms:
