@@ -107,6 +107,7 @@ import {
   refusalFallbackToCreateRequest,
 } from "./elicitation.js";
 import { SettingsManager } from "./settings.js";
+import { protectedSettings } from "./protected-settings.js";
 import {
   applyTaskCreate,
   applyTaskUpdate,
@@ -5484,8 +5485,13 @@ export class ClaudeAcpAgent {
 
     const input = new Pushable<SDKUserMessage>();
 
+    const sessionMeta = params._meta as NewSessionMeta | undefined;
+    const userProvidedOptions = sessionMeta?.claudeCode?.options;
+    const selectedSettings = protectedSettings(userProvidedOptions);
     const settingsManager = new SettingsManager(params.cwd, {
       logger: this.logger,
+      settingSources: selectedSettings?.settingSources,
+      requiredUserSettings: selectedSettings?.settings,
     });
     await settingsManager.initialize();
 
@@ -5540,9 +5546,6 @@ export class ClaudeAcpAgent {
       this.logger,
     );
 
-    // Extract options from _meta if provided
-    const sessionMeta = params._meta as NewSessionMeta | undefined;
-    const userProvidedOptions = sessionMeta?.claudeCode?.options;
     const forwardSubagentText =
       supportsSubagentTranscript(this.clientCapabilities) ||
       userProvidedOptions?.forwardSubagentText === true;
@@ -5609,11 +5612,13 @@ export class ClaudeAcpAgent {
       settingSources: ["user", "project", "local"],
       ...(thinking !== undefined && { thinking }),
       ...userProvidedOptions,
+      ...selectedSettings,
       // CLAUDE_MODEL_CONFIG env var is a fallback for model
       // configuration (e.g. Bedrock model ID overrides). When the caller
       // provides settings via _meta, we intentionally ignore the env var —
       // the caller is assumed to have full control over model configuration.
-      ...(!userProvidedOptions?.settings &&
+      ...(!selectedSettings &&
+        !userProvidedOptions?.settings &&
         modelConfig && {
           settings: {
             ...(modelConfig.modelOverrides && { modelOverrides: modelConfig.modelOverrides }),

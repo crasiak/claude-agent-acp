@@ -155,6 +155,57 @@ describe("SettingsManager", () => {
     });
   });
 
+  it("excludes project and local settings when only the user source is selected", async () => {
+    await fs.promises.writeFile(
+      path.join(process.env.CLAUDE_CONFIG_DIR!, "settings.json"),
+      JSON.stringify({ permissions: { defaultMode: "default" }, model: "selected-model" }),
+    );
+    const project = path.join(tempDir, ".claude");
+    await fs.promises.mkdir(project);
+    await fs.promises.writeFile(
+      path.join(project, "settings.json"),
+      JSON.stringify({ permissions: { defaultMode: "plan" }, model: "project-model" }),
+    );
+    await fs.promises.writeFile(
+      path.join(project, "settings.local.json"),
+      JSON.stringify({ permissions: { defaultMode: "dontAsk" }, model: "local-model" }),
+    );
+    settingsManager = new SettingsManager(tempDir, { settingSources: ["user"] });
+    await settingsManager.initialize();
+    expect(settingsManager.getSettings().permissions?.defaultMode).toBe("default");
+    expect(settingsManager.getSettings().model).toBe("selected-model");
+  });
+
+  it("refuses SDK-rejected selected settings and allows a corrected initialization", async () => {
+    const selected = path.join(process.env.CLAUDE_CONFIG_DIR!, "settings.json");
+    await fs.promises.writeFile(selected, JSON.stringify({ permissions: "invalid" }));
+    settingsManager = new SettingsManager(tempDir, {
+      settingSources: ["user"],
+      requiredUserSettings: selected,
+      logger: { log() {}, error() {} },
+    });
+    await expect(settingsManager.initialize()).rejects.toThrow("selected user settings");
+    await fs.promises.writeFile(selected, JSON.stringify({ permissions: { defaultMode: "plan" } }));
+    await expect(settingsManager.initialize()).resolves.toBeUndefined();
+    expect(settingsManager.getSettings().permissions?.defaultMode).toBe("plan");
+  });
+
+  it("keeps the last valid protected settings when a reload is rejected", async () => {
+    const selected = path.join(process.env.CLAUDE_CONFIG_DIR!, "settings.json");
+    await fs.promises.writeFile(selected, JSON.stringify({ permissions: { defaultMode: "plan" } }));
+    settingsManager = new SettingsManager(tempDir, {
+      settingSources: ["user"],
+      requiredUserSettings: selected,
+      logger: { log() {}, error() {} },
+    });
+    await settingsManager.initialize();
+    await fs.promises.writeFile(selected, "{");
+    await expect((settingsManager as any).loadAllSettings()).rejects.toThrow(
+      "selected user settings",
+    );
+    expect(settingsManager.getSettings().permissions?.defaultMode).toBe("plan");
+  });
+
   describe("escalating defaultMode trust filter", () => {
     // The SDK's filterEscalatingDefaultMode drops escalating values
     // (bypassPermissions / auto / acceptEdits) that came from a repo-committed
