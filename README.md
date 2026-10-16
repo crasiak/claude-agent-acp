@@ -1,3 +1,5 @@
+> **Personal fork — not intended for public consumption.** This is a personal working copy of [agentclientprotocol/claude-agent-acp](https://github.com/agentclientprotocol/claude-agent-acp), kept for experiments. It is unmaintained and unsupported, may diverge from upstream or be rewritten at any time, and nothing here is released for others to use. Use the upstream project instead.
+
 # ACP adapter for the Claude Agent SDK
 
 [![npm](https://img.shields.io/npm/v/%40agentclientprotocol%2Fclaude-agent-acp)](https://www.npmjs.com/package/@agentclientprotocol/claude-agent-acp)
