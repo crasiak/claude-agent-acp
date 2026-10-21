@@ -45,7 +45,18 @@ if (process.argv.includes("--cli")) {
   // SDK subprocess inherits them. Going through resolveSettings (vs. a raw
   // read of managed-settings.json) also picks up MDM sources on macOS and
   // HKLM/HKCU on Windows.
+  const launchExecutable = process.env.CLAUDE_CODE_EXECUTABLE;
   const policy = await resolveSettings({ settingSources: [] });
+  const policyExecutable = policy.effective.env?.CLAUDE_CODE_EXECUTABLE;
+  // Refuse a conflicting launcher selection before applying any policy env.
+  // Do not include either value: policy env can contain sensitive information.
+  if (
+    launchExecutable !== undefined &&
+    policyExecutable !== undefined &&
+    policyExecutable !== launchExecutable
+  ) {
+    throw new Error("Managed policy CLAUDE_CODE_EXECUTABLE conflicts with the launch environment.");
+  }
   for (const [key, value] of Object.entries(policy.effective.env ?? {})) {
     process.env[key] = value;
   }
