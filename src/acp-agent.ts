@@ -220,6 +220,7 @@ import {
 } from "./permissions/presentation.js";
 import { decodeClaudePermissionResponse } from "./permissions/response.js";
 import { SettingsManager } from "./settings.js";
+import { protectedSettings } from "./protected-settings.js";
 import {
   activeUsageLimitMessage,
   airSessionFailureCapabilityMeta,
@@ -11287,8 +11288,13 @@ export class ClaudeAcpAgent {
 
     const input = new Pushable<SDKUserMessage>();
 
+    const sessionMeta = params._meta as NewSessionMeta | undefined;
+    const userProvidedOptions = sessionMeta?.claudeCode?.options;
+    const selectedSettings = protectedSettings(userProvidedOptions);
     const settingsManager = new SettingsManager(params.cwd, {
       logger: this.logger,
+      settingSources: selectedSettings?.settingSources,
+      requiredUserSettings: selectedSettings?.settings,
     });
     await settingsManager.initialize();
     timing.phase("settings");
@@ -11346,8 +11352,6 @@ export class ClaudeAcpAgent {
     // extension above.
     if (clientPrompt) systemPrompt = sdkSystemPrompt(clientPrompt, customInstructions);
 
-    // Extract options from _meta if provided
-    const sessionMeta = params._meta as NewSessionMeta | undefined;
     // Bypass is off for root outside a sandbox, when settings disable it (the
     // CLI refuses bypass then too), and hosts may opt a session out. Decided
     // once here: it gates the SDK flag, the spawn-time mode (the SDK rejects
@@ -11367,7 +11371,6 @@ export class ClaudeAcpAgent {
       allowBypass,
     );
 
-    const userProvidedOptions = sessionMeta?.claudeCode?.options;
     const forwardSubagentText = this.forwardsSubagentText(params._meta);
 
     // Configure thinking behavior from environment variable
@@ -11509,7 +11512,10 @@ export class ClaudeAcpAgent {
       // for clients that negotiated per-turn file-change reports; this avoids
       // snapshot I/O for every other session.
       ...(fileChangeReporter ? { enableFileCheckpointing: true } : {}),
-      ...(settings && { settings }),
+      // Protected user settings (CRA-955) are the only settings tier when
+      // selected: neither CLAUDE_MODEL_CONFIG nor a provider route is merged
+      // into them, and settingSources/strictMcpConfig come with them.
+      ...(selectedSettings ?? (settings && { settings })),
       env,
       // Override certain fields that must be controlled by ACP
       cwd: params.cwd,

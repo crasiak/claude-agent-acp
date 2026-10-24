@@ -6,8 +6,10 @@ import {
   filterEscalatingDefaultMode,
   resolveSettings,
   type Settings,
+  type SettingSource,
 } from "@anthropic-ai/claude-agent-sdk";
 import { claudeConfigDir } from "./paths.js";
+import { readSelectedUserSettings } from "./protected-settings.js";
 
 /**
  * Permission rule format examples:
@@ -33,6 +35,8 @@ function getManagedSettingsPath(): string {
 }
 
 export interface SettingsManagerOptions {
+  settingSources?: SettingSource[];
+  requiredUserSettings?: string;
   onChange?: () => void;
   logger?: { log: (...args: any[]) => void; error: (...args: any[]) => void };
 }
@@ -48,6 +52,8 @@ export interface SettingsManagerOptions {
  */
 export class SettingsManager {
   private cwd: string;
+  private readonly settingSources?: SettingSource[];
+  private readonly requiredUserSettings?: string;
   private effective: Settings = {};
   private managedDeniedModels: string[] = [];
   private managedApiKeyHelper?: string;
@@ -61,6 +67,8 @@ export class SettingsManager {
 
   constructor(cwd: string, options?: SettingsManagerOptions) {
     this.cwd = cwd;
+    this.settingSources = options?.settingSources && [...options.settingSources];
+    this.requiredUserSettings = options?.requiredUserSettings;
     this.onChange = options?.onChange;
     this.logger = options?.logger ?? console;
   }
@@ -77,13 +85,16 @@ export class SettingsManager {
     }
 
     this.disposed = false;
-    this.initPromise = this.loadAllSettings().then(() => {
-      if (!this.disposed) {
-        this.setupWatchers();
-        this.initialized = true;
-      }
-      this.initPromise = null;
-    });
+    this.initPromise = this.loadAllSettings()
+      .then(() => {
+        if (!this.disposed) {
+          this.setupWatchers();
+          this.initialized = true;
+        }
+      })
+      .finally(() => {
+        this.initPromise = null;
+      });
     return this.initPromise;
   }
 
@@ -92,10 +103,13 @@ export class SettingsManager {
    * containing directories means we pick up file creation as well as edits.
    */
   private getWatchedPaths(): string[] {
+    const sources = this.settingSources ?? ["user", "project", "local"];
     return [
-      path.join(claudeConfigDir(), "settings.json"),
-      path.join(this.cwd, ".claude", "settings.json"),
-      path.join(this.cwd, ".claude", "settings.local.json"),
+      ...(sources.includes("user")
+        ? [this.requiredUserSettings ?? path.join(claudeConfigDir(), "settings.json")]
+        : []),
+      ...(sources.includes("project") ? [path.join(this.cwd, ".claude", "settings.json")] : []),
+      ...(sources.includes("local") ? [path.join(this.cwd, ".claude", "settings.local.json")] : []),
       getManagedSettingsPath(),
     ];
   }
@@ -106,7 +120,26 @@ export class SettingsManager {
    */
   private async loadAllSettings(): Promise<void> {
     try {
-      const resolved = await resolveSettings({ cwd: this.cwd });
+      const selected =
+        this.requiredUserSettings && readSelectedUserSettings(this.requiredUserSettings);
+      const resolved = await resolveSettings({
+        cwd: this.cwd,
+        settingSources: this.settingSources,
+      });
+      // resolveSettings also drops schema errors. Nonempty selected settings
+      // must survive as a user source; empty objects legitimately have no source.
+      if (
+        selected &&
+        Object.keys(selected).length > 0 &&
+        !resolved.sources.some(
+          (source) =>
+            source.source === "user" &&
+            source.path &&
+            fs.realpathSync(source.path) === fs.realpathSync(this.requiredUserSettings!),
+        )
+      ) {
+        throw new Error("SDK rejected selected user settings");
+      }
       this.effective = filterEscalatingDefaultMode(resolved);
       // The CLI reads `deniedModels` from managed settings only.
       this.managedDeniedModels = resolved.sources
@@ -118,6 +151,9 @@ export class SettingsManager {
           : undefined;
     } catch (error) {
       this.logger.error("Failed to resolve settings:", error);
+      // Protected initialization refuses; a failed reload retains last-good
+      // settings instead of silently replacing them with permissive defaults.
+      if (this.requiredUserSettings !== undefined) throw error;
       this.effective = {};
       this.managedDeniedModels = [];
       this.managedApiKeyHelper = undefined;

@@ -46,6 +46,8 @@ describe("ClaudeAcpAgent settings", () => {
           ],
         }),
         setModel: setModelSpy,
+        interrupt: async () => undefined,
+        close: () => {},
       }) as any;
     });
     return { getCapturedOptions: () => capturedOptions, setModelSpy };
@@ -252,6 +254,44 @@ describe("ClaudeAcpAgent settings", () => {
     );
     expect(applyFlagSettings).toHaveBeenCalledWith({ effortLevel: "low" });
     expect(agent.sessions[response.sessionId].effortSettingsOverride?.effortLevel).toBe("medium");
+  });
+
+  it("uses protected user settings for both the shim and SDK", async () => {
+    const originalScope = process.env.CLAUDE_ACP_SETTINGS_SCOPE;
+    process.env.CLAUDE_ACP_SETTINGS_SCOPE = "user";
+    let agent: ClaudeAcpAgentType | undefined;
+    try {
+      const settings = path.join(tempDir, "settings.json");
+      await fs.promises.writeFile(
+        settings,
+        JSON.stringify({ permissions: { defaultMode: "default" } }),
+      );
+      const projectDir = path.join(tempDir, "project");
+      await fs.promises.mkdir(path.join(projectDir, ".claude"), { recursive: true });
+      for (const file of ["settings.json", "settings.local.json"]) {
+        await fs.promises.writeFile(
+          path.join(projectDir, ".claude", file),
+          JSON.stringify({ permissions: { defaultMode: "plan" } }),
+        );
+      }
+      const { getCapturedOptions } = mockQuery();
+      const { ClaudeAcpAgent } = await import("../acp-agent.js");
+      agent = new ClaudeAcpAgent(createMockClient());
+      const response = await (agent as any).createSession({
+        cwd: projectDir,
+        mcpServers: [],
+        _meta: { claudeCode: { options: { settings, settingSources: ["user"] } } },
+      });
+      expect(getCapturedOptions().permissionMode).toBe("default");
+      expect(getCapturedOptions().settingSources).toEqual(["user"]);
+      expect(getCapturedOptions().settings).toBe(settings);
+      expect(getCapturedOptions().strictMcpConfig).toBe(true);
+      expect(response.modes.currentModeId).toBe("default");
+    } finally {
+      if (originalScope === undefined) delete process.env.CLAUDE_ACP_SETTINGS_SCOPE;
+      else process.env.CLAUDE_ACP_SETTINGS_SCOPE = originalScope;
+      await agent?.dispose();
+    }
   });
 
   it("supports acceptEdits mode defaults", async () => {
