@@ -28,6 +28,20 @@ export async function applyManagedPolicyEnv(
     console.error("Failed to resolve managed policy settings:", error);
     return;
   }
+  // A launcher that selected the Claude executable must not have it
+  // replaced by managed policy (CRA-1148). Checked after the best-effort read
+  // and before any policy env is applied, and outside the read's catch, so a
+  // conflict fails startup closed. Neither value is included in the error:
+  // policy env can carry sensitive values.
+  const launchExecutable = env.CLAUDE_CODE_EXECUTABLE;
+  const policyExecutable = policy.effective.env?.CLAUDE_CODE_EXECUTABLE;
+  if (
+    launchExecutable !== undefined &&
+    policyExecutable !== undefined &&
+    policyExecutable !== launchExecutable
+  ) {
+    throw new Error("Managed policy CLAUDE_CODE_EXECUTABLE conflicts with the launch environment.");
+  }
   for (const [key, value] of Object.entries(policy.effective.env ?? {})) {
     env[key] = value;
   }
